@@ -14,6 +14,7 @@
 #include "esp_lib_utils.h"
 #include "./dark/stylesheet.hpp"
 #include "port_imu.h"
+#include "port_buttons.h"
 
 using namespace esp_brookesia;
 using namespace esp_brookesia::gui;
@@ -39,6 +40,22 @@ extern "C" void app_main(void)
     };
     ESP_UTILS_CHECK_NULL_EXIT(bsp_display_start_with_config(&cfg), "Start display failed");
     ESP_UTILS_CHECK_ERROR_EXIT(bsp_display_backlight_on(), "Turn on display backlight failed");
+
+    ESP_UTILS_LOGI("Initializing buttons...");
+    buttons_init();
+
+    static bool screen_on = true;
+    buttons_register_callback([](button_event_t event) {
+        if (event == BUTTON_EVENT_PWR_PRESS) {
+            if (screen_on) {
+                bsp_display_backlight_off();
+            } else {
+                bsp_display_backlight_on();
+            }
+            screen_on = !screen_on;
+            ESP_LOGI("Main", "Screen %s", screen_on ? "on" : "off");
+        }
+    });
 
     ESP_UTILS_LOGI("Initializing IMU...");
     if (imu_init() == ESP_OK) {
