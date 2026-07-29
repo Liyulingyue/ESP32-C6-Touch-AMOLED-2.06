@@ -1,5 +1,13 @@
 idf_component_register(
     SRCS "main.cpp"
+        "port_i2c.cpp"
+        "port_pmu.cpp"
+        "port_imu.cpp"
+        "port_touch.cpp"
+        "port_rtc.cpp"
+        "port_audio.cpp"
+        "port_buttons.cpp"
+        "port_wifi.cpp"
     INCLUDE_DIRS ".")
 
 target_compile_options(${COMPONENT_LIB} PUBLIC -Wno-missing-field-initializers)

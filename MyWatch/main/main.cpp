@@ -13,6 +13,7 @@
 #define ESP_UTILS_LOG_TAG "Main"
 #include "esp_lib_utils.h"
 #include "./dark/stylesheet.hpp"
+#include "port_imu.h"
 
 using namespace esp_brookesia;
 using namespace esp_brookesia::gui;
@@ -38,6 +39,13 @@ extern "C" void app_main(void)
     };
     ESP_UTILS_CHECK_NULL_EXIT(bsp_display_start_with_config(&cfg), "Start display failed");
     ESP_UTILS_CHECK_ERROR_EXIT(bsp_display_backlight_on(), "Turn on display backlight failed");
+
+    ESP_UTILS_LOGI("Initializing IMU...");
+    if (imu_init() == ESP_OK) {
+        ESP_UTILS_LOGI("IMU initialized successfully");
+    } else {
+        ESP_LOGE("Main", "IMU init failed");
+    }
 
     /* Configure GUI lock */
     LvLock::registerCallbacks([](int timeout_ms) {
@@ -71,12 +79,10 @@ extern "C" void app_main(void)
     }
 
     {
-        // When operating on non-GUI tasks, should acquire a lock before operating on LVGL
         LvLockGuard gui_guard;
 
         /* Begin the phone */
         ESP_UTILS_CHECK_FALSE_EXIT(phone->begin(), "Begin failed");
-        // assert(phone->getDisplay().showContainerBorder() && "Show container border failed");
 
         /* Init and install apps from registry */
         std::vector<systems::base::Manager::RegistryAppInfo> inited_apps;
@@ -107,7 +113,7 @@ extern "C" void app_main(void)
             .stack_size = 4096,
         });
         boost::thread([ = ]() {
-            char buffer[128];    /* Make sure buffer is enough for `sprintf` */
+            char buffer[128];
             size_t internal_free = 0;
             size_t internal_total = 0;
             size_t external_free = 0;

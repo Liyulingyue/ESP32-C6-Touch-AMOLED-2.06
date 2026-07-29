@@ -1,3 +1,7 @@
 ## IDF Component Manager Manifest File
 dependencies:
   waveshare/esp32_c6_touch_amoled_2_06: "*"
+  waveshare/qmi8658: "*"
+  espressif/esp_lvgl_port: "*"
+  espressif/esp_audio_codec: "*"
+  espressif/esp_codec_dev: "*"
