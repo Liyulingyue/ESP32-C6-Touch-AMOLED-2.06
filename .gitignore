@@ -1,0 +1,31 @@
+# Build directories
+build/
+sdkconfig
+sdkconfig.old
+*.pyc
+__pycache__/
+
+# ESP-IDF
+*.bin
+*.elf
+*.map
+*.d
+managed_components/
+
+# Python virtual environments
+venv/
+env/
+.pio/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+**/build/
+**/sdkconfig
