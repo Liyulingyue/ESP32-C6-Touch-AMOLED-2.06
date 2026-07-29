@@ -2,7 +2,7 @@ dependencies:
   brookesia_core:
     dependencies: []
     source:
-      path: F:\PythonCodes\ESP32-C6-Touch-AMOLED-2.06\examples\ESP-IDF-v5.5.1\03_esp-brookesia\components\brookesia_core
+      path: F:\PythonCodes\ESP32-C6-Touch-AMOLED-2.06\MyWatch\components\brookesia_core
       type: local
     version: 0.6.0-beta2
   espressif/cmake_utilities:
@@ -148,18 +148,10 @@ dependencies:
       type: service
     version: 1.1.0~2
   espressif/esp_lvgl_port:
-    component_hash: fb6c1fdfe70d4ca39a035d63ca394a35f17ec84ce16ff98ecb13a54155d75da4
-    dependencies:
-    - name: idf
-      require: private
-      version: '>=5.2'
-    - name: lvgl/lvgl
-      registry_url: https://components.espressif.com
-      require: public
-      version: '>=8,<10'
+    dependencies: []
     source:
-      registry_url: https://components.espressif.com
-      type: service
+      path: F:\PythonCodes\ESP32-C6-Touch-AMOLED-2.06\MyWatch\components\espressif__esp_lvgl_port
+      type: local
     version: 2.8.0~1
   espressif/esp_mmap_assets:
     component_hash: b47cf5249d7a7ba8448f165c6de395503a2c2695769ff6d3fa06f2fa4595b270
@@ -329,6 +321,6 @@ direct_dependencies:
 - idf
 - lvgl/lvgl
 - waveshare/esp32_c6_touch_amoled_2_06
-manifest_hash: 9cbe38cbe50e028b0d6ec8d0b2c66649fa7449c8ba49f55bece6cbf3f942e036
+manifest_hash: e21cafc6e2ebedeca66b01923ae1ee2621c7cbe9f770206fc7916a85f7c6572c
 target: esp32c6
 version: 2.0.0
