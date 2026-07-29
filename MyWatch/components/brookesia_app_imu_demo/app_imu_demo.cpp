@@ -16,47 +16,47 @@ using namespace esp_brookesia::gui;
 using namespace esp_brookesia::systems;
 
 #define APP_NAME "IMU"
+#define PAGE_COUNT 7
+#define AXIS_COUNT 3
+
+namespace {
+
+enum PageId { PAGE_ZERO, PAGE_ACCEL, PAGE_GYRO, PAGE_ATTITUDE, PAGE_FIXED, PAGE_ACCEL_CALIB, PAGE_GYRO_CALIB };
+
+struct PageInfo {
+    PageId id;
+    const char *title;
+    uint32_t color;
+    const char *nav_hint;
+};
+
+static constexpr PageInfo s_page_info[PAGE_COUNT] = {
+    {PAGE_ZERO, "ZERO POINT", 0xBF8700, "Swipe Left->GyroCalib  Right->Accel"},
+    {PAGE_ACCEL, "ACCELEROMETER", 0x1C7F54, "Swipe Left->Zero  Right->Gyro"},
+    {PAGE_GYRO, "GYROSCOPE", 0xA62639, "Swipe Left->Fixed  Right->Accel"},
+    {PAGE_ATTITUDE, "ATTITUDE", 0x8B5CF6, "Swipe Left->Fixed  Right->Gyro"},
+    {PAGE_FIXED, "FIXED ACCEL", 0x0FB3B1, "Swipe Left->AccelCalib  Right->Attitude"},
+    {PAGE_ACCEL_CALIB, "ACCEL CALIB", 0x1C7F54, "Swipe Left->Fixed  Right->GyroCalib"},
+    {PAGE_GYRO_CALIB, "GYRO CALIB", 0xA62639, "Swipe Left->AccelCalib  Right->Zero"},
+};
+
+struct AxisUI {
+    lv_obj_t *vals[AXIS_COUNT];
+    lv_obj_t *bars[AXIS_COUNT];
+};
+
+}
 
 namespace esp_brookesia::apps {
 
 static qmi8658_dev_t *s_imu_dev = nullptr;
 static lv_timer_t *s_imu_timer = nullptr;
+static lv_obj_t *s_pages[PAGE_COUNT] = {nullptr};
+static lv_obj_t *s_status_label = nullptr;
 static float s_accel_offset[3] = {0};
 static float s_gyro_offset[3] = {0};
-static float s_gyro_filtered[3] = {0};
-static constexpr float FILTER_ALPHA = 0.001f;
-
 static float s_angle[3] = {0};
-
-static lv_obj_t *s_scr_accel = nullptr;
-static lv_obj_t *s_scr_gyro = nullptr;
-static lv_obj_t *s_scr_accel_calib = nullptr;
-static lv_obj_t *s_scr_gyro_calib = nullptr;
-static lv_obj_t *s_scr_zero = nullptr;
-static lv_obj_t *s_scr_fixed_accel = nullptr;
-
-static lv_obj_t *s_status_label = nullptr;
-
-static lv_obj_t *s_accel_calib_x_val = nullptr;
-static lv_obj_t *s_accel_calib_y_val = nullptr;
-static lv_obj_t *s_accel_calib_z_val = nullptr;
-static lv_obj_t *s_accel_calib_x_bar = nullptr;
-static lv_obj_t *s_accel_calib_y_bar = nullptr;
-static lv_obj_t *s_accel_calib_z_bar = nullptr;
-
-static lv_obj_t *s_gyro_calib_x_val = nullptr;
-static lv_obj_t *s_gyro_calib_y_val = nullptr;
-static lv_obj_t *s_gyro_calib_z_val = nullptr;
-static lv_obj_t *s_gyro_calib_x_bar = nullptr;
-static lv_obj_t *s_gyro_calib_y_bar = nullptr;
-static lv_obj_t *s_gyro_calib_z_bar = nullptr;
-
-static lv_obj_t *s_fixed_accel_x_val = nullptr;
-static lv_obj_t *s_fixed_accel_y_val = nullptr;
-static lv_obj_t *s_fixed_accel_z_val = nullptr;
-static lv_obj_t *s_fixed_accel_x_bar = nullptr;
-static lv_obj_t *s_fixed_accel_y_bar = nullptr;
-static lv_obj_t *s_fixed_accel_z_bar = nullptr;
+static AxisUI s_page_ui[PAGE_COUNT] = {};
 
 IMUDemo *IMUDemo::_instance = nullptr;
 
@@ -68,96 +68,42 @@ IMUDemo *IMUDemo::requestInstance()
     return _instance;
 }
 
-IMUDemo::IMUDemo():
-    App(APP_NAME, nullptr, true, false, false)
-{
-}
-
-IMUDemo::~IMUDemo()
-{
-}
+IMUDemo::IMUDemo(): App(APP_NAME, nullptr, true, false, false) {}
+IMUDemo::~IMUDemo() {}
 
 static void switch_screen(lv_obj_t *target)
 {
     lv_scr_load_anim(target, LV_SCR_LOAD_ANIM_FADE_ON, 200, 0, false);
 }
 
-static void ui_event_scr_accel(lv_event_t *e)
+static int find_page_index(lv_obj_t *page)
 {
-    lv_event_code_t code = lv_event_get_code(e);
-    if (code == LV_EVENT_GESTURE && lv_indev_get_gesture_dir(lv_indev_active()) == LV_DIR_LEFT) {
-        lv_indev_wait_release(lv_indev_active());
-        switch_screen(s_scr_zero);
-    } else if (code == LV_EVENT_GESTURE && lv_indev_get_gesture_dir(lv_indev_active()) == LV_DIR_RIGHT) {
-        lv_indev_wait_release(lv_indev_active());
-        switch_screen(s_scr_gyro);
+    for (int i = 0; i < PAGE_COUNT; i++) {
+        if (s_pages[i] == page) return i;
     }
+    return -1;
 }
 
-static void ui_event_scr_gyro(lv_event_t *e)
+static void ui_event_handler(lv_event_t *e)
 {
     lv_event_code_t code = lv_event_get_code(e);
-    if (code == LV_EVENT_GESTURE && lv_indev_get_gesture_dir(lv_indev_active()) == LV_DIR_LEFT) {
-        lv_indev_wait_release(lv_indev_active());
-        switch_screen(s_scr_accel);
-    } else if (code == LV_EVENT_GESTURE && lv_indev_get_gesture_dir(lv_indev_active()) == LV_DIR_RIGHT) {
-        lv_indev_wait_release(lv_indev_active());
-        switch_screen(s_scr_fixed_accel);
-    }
+    if (code != LV_EVENT_GESTURE) return;
+
+    lv_obj_t *page = (lv_obj_t *)lv_event_get_target(e);
+    int idx = find_page_index(page);
+    if (idx < 0) return;
+
+    int dir = lv_indev_get_gesture_dir(lv_indev_active());
+    int next_idx = (dir == LV_DIR_LEFT) ? (idx + 1) % PAGE_COUNT : (idx - 1 + PAGE_COUNT) % PAGE_COUNT;
+
+    lv_indev_wait_release(lv_indev_active());
+    switch_screen(s_pages[next_idx]);
 }
 
-static void ui_event_scr_fixed_accel(lv_event_t *e)
-{
-    lv_event_code_t code = lv_event_get_code(e);
-    if (code == LV_EVENT_GESTURE && lv_indev_get_gesture_dir(lv_indev_active()) == LV_DIR_LEFT) {
-        lv_indev_wait_release(lv_indev_active());
-        switch_screen(s_scr_gyro);
-    } else if (code == LV_EVENT_GESTURE && lv_indev_get_gesture_dir(lv_indev_active()) == LV_DIR_RIGHT) {
-        lv_indev_wait_release(lv_indev_active());
-        switch_screen(s_scr_accel_calib);
-    }
-}
-
-static void ui_event_scr_accel_calib(lv_event_t *e)
-{
-    lv_event_code_t code = lv_event_get_code(e);
-    if (code == LV_EVENT_GESTURE && lv_indev_get_gesture_dir(lv_indev_active()) == LV_DIR_LEFT) {
-        lv_indev_wait_release(lv_indev_active());
-        switch_screen(s_scr_fixed_accel);
-    } else if (code == LV_EVENT_GESTURE && lv_indev_get_gesture_dir(lv_indev_active()) == LV_DIR_RIGHT) {
-        lv_indev_wait_release(lv_indev_active());
-        switch_screen(s_scr_gyro_calib);
-    }
-}
-
-static void ui_event_scr_gyro_calib(lv_event_t *e)
-{
-    lv_event_code_t code = lv_event_get_code(e);
-    if (code == LV_EVENT_GESTURE && lv_indev_get_gesture_dir(lv_indev_active()) == LV_DIR_LEFT) {
-        lv_indev_wait_release(lv_indev_active());
-        switch_screen(s_scr_accel_calib);
-    } else if (code == LV_EVENT_GESTURE && lv_indev_get_gesture_dir(lv_indev_active()) == LV_DIR_RIGHT) {
-        lv_indev_wait_release(lv_indev_active());
-        switch_screen(s_scr_zero);
-    }
-}
-
-static void ui_event_scr_zero(lv_event_t *e)
-{
-    lv_event_code_t code = lv_event_get_code(e);
-    if (code == LV_EVENT_GESTURE && lv_indev_get_gesture_dir(lv_indev_active()) == LV_DIR_LEFT) {
-        lv_indev_wait_release(lv_indev_active());
-        switch_screen(s_scr_gyro_calib);
-    } else if (code == LV_EVENT_GESTURE && lv_indev_get_gesture_dir(lv_indev_active()) == LV_DIR_RIGHT) {
-        lv_indev_wait_release(lv_indev_active());
-        switch_screen(s_scr_accel);
-    }
-}
-
-static void update_calib_bar(lv_obj_t *val_label, lv_obj_t *bar, float value, float max_val)
+static void update_axis(lv_obj_t *val_label, lv_obj_t *bar, float value, float max_val, const char *unit)
 {
     char buf[32];
-    snprintf(buf, sizeof(buf), "%.2f", value);
+    snprintf(buf, sizeof(buf), "%.2f %s", value, unit);
     lv_label_set_text(val_label, buf);
 
     float abs_val = fabsf(value);
@@ -176,179 +122,92 @@ static void update_calib_bar(lv_obj_t *val_label, lv_obj_t *bar, float value, fl
     }
 }
 
-bool IMUDemo::run(void)
+static void create_base_page(int page_idx)
 {
-    ESP_UTILS_LOGD("Run IMU Demo");
+    lv_obj_t *page = lv_obj_create(NULL);
+    lv_obj_set_size(page, 410, 502);
+    lv_obj_set_style_bg_color(page, lv_color_hex(0x0D1117), 0);
+    lv_obj_add_event_cb(page, ui_event_handler, LV_EVENT_GESTURE, nullptr);
+    s_pages[page_idx] = page;
 
-    if (s_imu_dev == nullptr) {
-        i2c_master_bus_handle_t bus_handle = bsp_i2c_get_handle();
-        if (bus_handle != nullptr) {
-            s_imu_dev = new qmi8658_dev_t;
-            if (qmi8658_init(s_imu_dev, bus_handle, QMI8658_ADDRESS_HIGH) == ESP_OK) {
-                qmi8658_set_accel_range(s_imu_dev, QMI8658_ACCEL_RANGE_8G);
-                qmi8658_set_accel_odr(s_imu_dev, QMI8658_ACCEL_ODR_500HZ);
-                qmi8658_set_accel_unit_mps2(s_imu_dev, true);
-                qmi8658_write_register(s_imu_dev, QMI8658_CTRL5, 0x03);
-                ESP_UTILS_LOGI("IMU initialized");
-            } else {
-                delete s_imu_dev;
-                s_imu_dev = nullptr;
-                ESP_LOGE("IMU_DEMO", "QMI8658 init failed");
-            }
-        }
-    }
+    lv_obj_t *title_bg = lv_obj_create(page);
+    lv_obj_set_size(title_bg, 410, 70);
+    lv_obj_align(title_bg, LV_ALIGN_TOP_MID, 0, 0);
+    lv_obj_set_style_bg_color(title_bg, lv_color_hex(s_page_info[page_idx].color), 0);
+    lv_obj_clear_flag(title_bg, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
 
-    static lv_obj_t *accel_x_val, *accel_y_val, *accel_z_val;
-    static lv_obj_t *accel_x_bar, *accel_y_bar, *accel_z_bar;
-    static lv_obj_t *gyro_x_val, *gyro_y_val, *gyro_z_val;
-    static lv_obj_t *gyro_x_bar, *gyro_y_bar, *gyro_z_bar;
+    lv_obj_t *title = lv_label_create(title_bg);
+    lv_label_set_text(title, s_page_info[page_idx].title);
+    lv_obj_align(title, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_style_text_color(title, lv_color_white(), 0);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_28, 0);
+    lv_obj_clear_flag(title, LV_OBJ_FLAG_CLICKABLE);
 
-    s_scr_accel = lv_obj_create(NULL);
-    lv_obj_set_size(s_scr_accel, 410, 502);
-    lv_obj_set_style_bg_color(s_scr_accel, lv_color_hex(0x0D1117), 0);
-    lv_obj_add_event_cb(s_scr_accel, ui_event_scr_accel, LV_EVENT_GESTURE, nullptr);
+    lv_obj_t *hint = lv_label_create(page);
+    lv_label_set_text(hint, s_page_info[page_idx].nav_hint);
+    lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, 5);
+    lv_obj_set_style_text_color(hint, lv_color_hex(0x8B949E), 0);
+    lv_obj_set_style_text_font(hint, &lv_font_montserrat_14, 0);
+    lv_obj_clear_flag(hint, LV_OBJ_FLAG_CLICKABLE);
+}
 
-    s_scr_gyro = lv_obj_create(NULL);
-    lv_obj_set_size(s_scr_gyro, 410, 502);
-    lv_obj_set_style_bg_color(s_scr_gyro, lv_color_hex(0x0D1117), 0);
-    lv_obj_add_event_cb(s_scr_gyro, ui_event_scr_gyro, LV_EVENT_GESTURE, nullptr);
+static void create_gauge(int page_idx, int axis_idx, const char *axis_name, uint32_t color, const char *unit)
+{
+    int y_base = 90 + axis_idx * 130;
+    lv_obj_t *container = lv_obj_create(s_pages[page_idx]);
+    lv_obj_set_size(container, 390, 115);
+    lv_obj_align(container, LV_ALIGN_TOP_MID, 0, y_base);
+    lv_obj_set_style_bg_color(container, lv_color_hex(0x161B22), 0);
+    lv_obj_set_style_radius(container, 16, 0);
+    lv_obj_set_style_border_width(container, 0, 0);
+    lv_obj_clear_flag(container, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
 
-    s_scr_zero = lv_obj_create(NULL);
-    lv_obj_set_size(s_scr_zero, 410, 502);
-    lv_obj_set_style_bg_color(s_scr_zero, lv_color_hex(0x0D1117), 0);
-    lv_obj_add_event_cb(s_scr_zero, ui_event_scr_zero, LV_EVENT_GESTURE, nullptr);
+    lv_obj_t *axis_label = lv_label_create(container);
+    lv_label_set_text(axis_label, axis_name);
+    lv_obj_set_pos(axis_label, 25, 15);
+    lv_obj_set_style_text_color(axis_label, lv_color_hex(color), 0);
+    lv_obj_set_style_text_font(axis_label, &lv_font_montserrat_36, 0);
+    lv_obj_clear_flag(axis_label, LV_OBJ_FLAG_CLICKABLE);
 
-    s_scr_accel_calib = lv_obj_create(NULL);
-    lv_obj_set_size(s_scr_accel_calib, 410, 502);
-    lv_obj_set_style_bg_color(s_scr_accel_calib, lv_color_hex(0x0D1117), 0);
-    lv_obj_add_event_cb(s_scr_accel_calib, ui_event_scr_accel_calib, LV_EVENT_GESTURE, nullptr);
+    lv_obj_t *val_label = lv_label_create(container);
+    char buf[32];
+    snprintf(buf, sizeof(buf), "0.00 %s", unit);
+    lv_label_set_text(val_label, buf);
+    lv_obj_align(val_label, LV_ALIGN_TOP_RIGHT, -25, 15);
+    lv_obj_set_style_text_color(val_label, lv_color_white(), 0);
+    lv_obj_set_style_text_font(val_label, &lv_font_montserrat_24, 0);
+    lv_obj_clear_flag(val_label, LV_OBJ_FLAG_CLICKABLE);
 
-    s_scr_gyro_calib = lv_obj_create(NULL);
-    lv_obj_set_size(s_scr_gyro_calib, 410, 502);
-    lv_obj_set_style_bg_color(s_scr_gyro_calib, lv_color_hex(0x0D1117), 0);
-    lv_obj_add_event_cb(s_scr_gyro_calib, ui_event_scr_gyro_calib, LV_EVENT_GESTURE, nullptr);
+    lv_obj_t *bar_bg = lv_obj_create(container);
+    lv_obj_set_size(bar_bg, 340, 20);
+    lv_obj_align(bar_bg, LV_ALIGN_BOTTOM_MID, 0, -15);
+    lv_obj_set_style_radius(bar_bg, 10, 0);
+    lv_obj_set_style_bg_color(bar_bg, lv_color_hex(0x30363D), 0);
+    lv_obj_set_style_border_width(bar_bg, 0, 0);
+    lv_obj_clear_flag(bar_bg, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
 
-    s_scr_fixed_accel = lv_obj_create(NULL);
-    lv_obj_set_size(s_scr_fixed_accel, 410, 502);
-    lv_obj_set_style_bg_color(s_scr_fixed_accel, lv_color_hex(0x0D1117), 0);
-    lv_obj_add_event_cb(s_scr_fixed_accel, ui_event_scr_fixed_accel, LV_EVENT_GESTURE, nullptr);
+    lv_obj_t *center_tick = lv_obj_create(bar_bg);
+    lv_obj_set_size(center_tick, 4, 20);
+    lv_obj_align(center_tick, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_style_bg_color(center_tick, lv_color_white(), 0);
+    lv_obj_set_style_border_width(center_tick, 0, 0);
+    lv_obj_clear_flag(center_tick, LV_OBJ_FLAG_CLICKABLE);
 
-    auto create_title = [](lv_obj_t *parent, const char *text, lv_color_t bg_color) {
-        lv_obj_t *title_bg = lv_obj_create(parent);
-        lv_obj_set_size(title_bg, 410, 70);
-        lv_obj_align(title_bg, LV_ALIGN_TOP_MID, 0, 0);
-        lv_obj_set_style_bg_color(title_bg, bg_color, 0);
-        lv_obj_clear_flag(title_bg, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t *bar = lv_obj_create(bar_bg);
+    lv_obj_set_size(bar, 1, 20);
+    lv_obj_align(bar, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_style_radius(bar, 0, 0);
+    lv_obj_set_style_bg_color(bar, lv_color_hex(color), 0);
+    lv_obj_set_style_border_width(bar, 0, 0);
+    lv_obj_clear_flag(bar, LV_OBJ_FLAG_CLICKABLE);
 
-        lv_obj_t *title = lv_label_create(title_bg);
-        lv_label_set_text(title, text);
-        lv_obj_align(title, LV_ALIGN_CENTER, 0, 0);
-        lv_obj_set_style_text_color(title, lv_color_white(), 0);
-        lv_obj_set_style_text_font(title, &lv_font_montserrat_28, 0);
-        lv_obj_clear_flag(title, LV_OBJ_FLAG_CLICKABLE);
-        return title_bg;
-    };
+    s_page_ui[page_idx].vals[axis_idx] = val_label;
+    s_page_ui[page_idx].bars[axis_idx] = bar;
+}
 
-    auto create_nav_hint = [](lv_obj_t *parent, const char *text) {
-        lv_obj_t *hint = lv_label_create(parent);
-        lv_label_set_text(hint, text);
-        lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, 5);
-        lv_obj_set_style_text_color(hint, lv_color_hex(0x8B949E), 0);
-        lv_obj_set_style_text_font(hint, &lv_font_montserrat_14, 0);
-        lv_obj_clear_flag(hint, LV_OBJ_FLAG_CLICKABLE);
-    };
-
-    create_title(s_scr_accel, "ACCELEROMETER", lv_color_hex(0x1C7F54));
-    create_nav_hint(s_scr_accel, "Swipe Left->Zero  Right->Gyro");
-
-    create_title(s_scr_gyro, "GYROSCOPE", lv_color_hex(0xA62639));
-    create_nav_hint(s_scr_gyro, "Swipe Left->Accel  Right->Fixed");
-
-    create_title(s_scr_fixed_accel, "FIXED ACCEL", lv_color_hex(0x0FB3B1));
-    create_nav_hint(s_scr_fixed_accel, "Swipe Left->Gyro  Right->AccelCalib");
-
-    create_title(s_scr_accel_calib, "ACCEL CALIB", lv_color_hex(0x1C7F54));
-    create_nav_hint(s_scr_accel_calib, "Swipe Left->Fixed  Right->GyroCalib");
-
-    create_title(s_scr_gyro_calib, "GYRO CALIB", lv_color_hex(0xA62639));
-    create_nav_hint(s_scr_gyro_calib, "Swipe Left->AccelCalib  Right->Zero");
-
-    create_title(s_scr_zero, "ZERO POINT", lv_color_hex(0xBF8700));
-    create_nav_hint(s_scr_zero, "Swipe Left->GyroCalib  Right->Accel");
-
-    auto create_gauge = [](lv_obj_t *parent, int idx, const char *axis, lv_color_t color, const char *unit, lv_obj_t **out_val, lv_obj_t **out_bar) {
-        int y_base = 90 + idx * 130;
-        lv_obj_t *container = lv_obj_create(parent);
-        lv_obj_set_size(container, 390, 115);
-        lv_obj_align(container, LV_ALIGN_TOP_MID, 0, y_base);
-        lv_obj_set_style_bg_color(container, lv_color_hex(0x161B22), 0);
-        lv_obj_set_style_radius(container, 16, 0);
-        lv_obj_set_style_border_width(container, 0, 0);
-        lv_obj_clear_flag(container, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
-
-        lv_obj_t *axis_label = lv_label_create(container);
-        lv_label_set_text(axis_label, axis);
-        lv_obj_set_pos(axis_label, 25, 15);
-        lv_obj_set_style_text_color(axis_label, color, 0);
-        lv_obj_set_style_text_font(axis_label, &lv_font_montserrat_36, 0);
-        lv_obj_clear_flag(axis_label, LV_OBJ_FLAG_CLICKABLE);
-
-        lv_obj_t *val_label = lv_label_create(container);
-        char buf[32];
-        snprintf(buf, sizeof(buf), "0.00 %s", unit);
-        lv_label_set_text(val_label, buf);
-        lv_obj_align(val_label, LV_ALIGN_TOP_RIGHT, -25, 15);
-        lv_obj_set_style_text_color(val_label, lv_color_white(), 0);
-        lv_obj_set_style_text_font(val_label, &lv_font_montserrat_24, 0);
-        lv_obj_clear_flag(val_label, LV_OBJ_FLAG_CLICKABLE);
-        *out_val = val_label;
-
-        lv_obj_t *bar_bg = lv_obj_create(container);
-        lv_obj_set_size(bar_bg, 340, 20);
-        lv_obj_align(bar_bg, LV_ALIGN_BOTTOM_MID, 0, -15);
-        lv_obj_set_style_radius(bar_bg, 10, 0);
-        lv_obj_set_style_bg_color(bar_bg, lv_color_hex(0x30363D), 0);
-        lv_obj_set_style_border_width(bar_bg, 0, 0);
-        lv_obj_clear_flag(bar_bg, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
-
-        lv_obj_t *center_tick = lv_obj_create(bar_bg);
-        lv_obj_set_size(center_tick, 4, 20);
-        lv_obj_align(center_tick, LV_ALIGN_CENTER, 0, 0);
-        lv_obj_set_style_bg_color(center_tick, lv_color_white(), 0);
-        lv_obj_set_style_border_width(center_tick, 0, 0);
-        lv_obj_clear_flag(center_tick, LV_OBJ_FLAG_CLICKABLE);
-
-        lv_obj_t *bar = lv_obj_create(bar_bg);
-        lv_obj_set_size(bar, 1, 20);
-        lv_obj_align(bar, LV_ALIGN_CENTER, 0, 0);
-        lv_obj_set_style_radius(bar, 0, 0);
-        lv_obj_set_style_bg_color(bar, color, 0);
-        lv_obj_set_style_border_width(bar, 0, 0);
-        lv_obj_clear_flag(bar, LV_OBJ_FLAG_CLICKABLE);
-        *out_bar = bar;
-    };
-
-    create_gauge(s_scr_accel, 0, "X", lv_color_hex(0x58A6FF), "m/s2", &accel_x_val, &accel_x_bar);
-    create_gauge(s_scr_accel, 1, "Y", lv_color_hex(0x58A6FF), "m/s2", &accel_y_val, &accel_y_bar);
-    create_gauge(s_scr_accel, 2, "Z", lv_color_hex(0x58A6FF), "m/s2", &accel_z_val, &accel_z_bar);
-
-    create_gauge(s_scr_gyro, 0, "X", lv_color_hex(0xFF7B72), "rad/s", &gyro_x_val, &gyro_x_bar);
-    create_gauge(s_scr_gyro, 1, "Y", lv_color_hex(0xFF7B72), "rad/s", &gyro_y_val, &gyro_y_bar);
-    create_gauge(s_scr_gyro, 2, "Z", lv_color_hex(0xFF7B72), "rad/s", &gyro_z_val, &gyro_z_bar);
-
-    create_gauge(s_scr_accel_calib, 0, "X", lv_color_hex(0x58A6FF), "m/s2", &s_accel_calib_x_val, &s_accel_calib_x_bar);
-    create_gauge(s_scr_accel_calib, 1, "Y", lv_color_hex(0x58A6FF), "m/s2", &s_accel_calib_y_val, &s_accel_calib_y_bar);
-    create_gauge(s_scr_accel_calib, 2, "Z", lv_color_hex(0x58A6FF), "m/s2", &s_accel_calib_z_val, &s_accel_calib_z_bar);
-
-    create_gauge(s_scr_gyro_calib, 0, "X", lv_color_hex(0xFF7B72), "rad/s", &s_gyro_calib_x_val, &s_gyro_calib_x_bar);
-    create_gauge(s_scr_gyro_calib, 1, "Y", lv_color_hex(0xFF7B72), "rad/s", &s_gyro_calib_y_val, &s_gyro_calib_y_bar);
-    create_gauge(s_scr_gyro_calib, 2, "Z", lv_color_hex(0xFF7B72), "rad/s", &s_gyro_calib_z_val, &s_gyro_calib_z_bar);
-
-    create_gauge(s_scr_fixed_accel, 0, "X", lv_color_hex(0x0FB3B1), "m/s2", &s_fixed_accel_x_val, &s_fixed_accel_x_bar);
-    create_gauge(s_scr_fixed_accel, 1, "Y", lv_color_hex(0x0FB3B1), "m/s2", &s_fixed_accel_y_val, &s_fixed_accel_y_bar);
-    create_gauge(s_scr_fixed_accel, 2, "Z", lv_color_hex(0x0FB3B1), "m/s2", &s_fixed_accel_z_val, &s_fixed_accel_z_bar);
-
-    lv_obj_t *zero_box = lv_obj_create(s_scr_zero);
+static void create_zero_page(void)
+{
+    lv_obj_t *zero_box = lv_obj_create(s_pages[PAGE_ZERO]);
     lv_obj_set_size(zero_box, 370, 350);
     lv_obj_align(zero_box, LV_ALIGN_TOP_LEFT, 20, 85);
     lv_obj_set_style_bg_color(zero_box, lv_color_hex(0x161B22), 0);
@@ -370,184 +229,205 @@ bool IMUDemo::run(void)
     lv_obj_set_style_text_font(zero_hint, &lv_font_montserrat_16, 0);
     lv_obj_clear_flag(zero_hint, LV_OBJ_FLAG_CLICKABLE);
 
-    lv_obj_t *accel_zero_btn = lv_btn_create(zero_box);
-    lv_obj_set_size(accel_zero_btn, 320, 65);
-    lv_obj_align(accel_zero_btn, LV_ALIGN_TOP_LEFT, 25, 95);
-    lv_obj_set_style_bg_color(accel_zero_btn, lv_color_hex(0x238636), 0);
-    lv_obj_set_style_radius(accel_zero_btn, 16, 0);
-    lv_obj_t *accel_zero_label = lv_label_create(accel_zero_btn);
-    lv_label_set_text(accel_zero_label, "SET ACCEL ZERO");
-    lv_obj_center(accel_zero_label);
-    lv_obj_set_style_text_color(accel_zero_label, lv_color_white(), 0);
-    lv_obj_set_style_text_font(accel_zero_label, &lv_font_montserrat_20, 0);
+    auto create_btn = [](lv_obj_t *parent, int y, uint32_t color, const char *text) {
+        lv_obj_t *btn = lv_btn_create(parent);
+        lv_obj_set_size(btn, 320, 65);
+        lv_obj_align(btn, LV_ALIGN_TOP_LEFT, 25, y);
+        lv_obj_set_style_bg_color(btn, lv_color_hex(color), 0);
+        lv_obj_set_style_radius(btn, 16, 0);
+        lv_obj_t *label = lv_label_create(btn);
+        lv_label_set_text(label, text);
+        lv_obj_center(label);
+        lv_obj_set_style_text_color(label, lv_color_white(), 0);
+        lv_obj_set_style_text_font(label, &lv_font_montserrat_20, 0);
+        return btn;
+    };
 
-    lv_obj_t *gyro_zero_btn = lv_btn_create(zero_box);
-    lv_obj_set_size(gyro_zero_btn, 320, 65);
-    lv_obj_align(gyro_zero_btn, LV_ALIGN_TOP_LEFT, 25, 175);
-    lv_obj_set_style_bg_color(gyro_zero_btn, lv_color_hex(0x992220), 0);
-    lv_obj_set_style_radius(gyro_zero_btn, 16, 0);
-    lv_obj_t *gyro_zero_label = lv_label_create(gyro_zero_btn);
-    lv_label_set_text(gyro_zero_label, "SET GYRO ZERO");
-    lv_obj_center(gyro_zero_label);
-    lv_obj_set_style_text_color(gyro_zero_label, lv_color_white(), 0);
-    lv_obj_set_style_text_font(gyro_zero_label, &lv_font_montserrat_20, 0);
+    lv_obj_t *accel_zero_btn = create_btn(zero_box, 95, 0x238636, "SET ACCEL ZERO");
+    lv_obj_t *gyro_zero_btn = create_btn(zero_box, 175, 0x992220, "SET GYRO ZERO");
+    lv_obj_t *reset_btn = create_btn(zero_box, 255, 0x30363D, "RESET ALL");
 
-    lv_obj_t *reset_btn = lv_btn_create(zero_box);
-    lv_obj_set_size(reset_btn, 320, 55);
-    lv_obj_align(reset_btn, LV_ALIGN_TOP_LEFT, 25, 255);
-    lv_obj_set_style_bg_color(reset_btn, lv_color_hex(0x30363D), 0);
-    lv_obj_set_style_radius(reset_btn, 16, 0);
-    lv_obj_t *reset_label = lv_label_create(reset_btn);
-    lv_label_set_text(reset_label, "RESET ALL");
-    lv_obj_center(reset_label);
-    lv_obj_set_style_text_color(reset_label, lv_color_white(), 0);
-    lv_obj_set_style_text_font(reset_label, &lv_font_montserrat_20, 0);
-
-    s_status_label = lv_label_create(s_scr_zero);
+    s_status_label = lv_label_create(s_pages[PAGE_ZERO]);
     lv_label_set_text(s_status_label, "Ready");
     lv_obj_align(s_status_label, LV_ALIGN_BOTTOM_MID, 0, 35);
     lv_obj_set_style_text_color(s_status_label, lv_color_hex(0x2EA043), 0);
     lv_obj_set_style_text_font(s_status_label, &lv_font_montserrat_18, 0);
     lv_obj_clear_flag(s_status_label, LV_OBJ_FLAG_CLICKABLE);
 
-lv_obj_add_event_cb(accel_zero_btn, [](lv_event_t *e) {
-        lv_event_code_t code = lv_event_get_code(e);
-        if (code == LV_EVENT_CLICKED && s_imu_dev != nullptr) {
+    lv_obj_add_event_cb(accel_zero_btn, [](lv_event_t *e) {
+        if (lv_event_get_code(e) == LV_EVENT_CLICKED && s_imu_dev != nullptr) {
             qmi8658_data_t data;
             if (qmi8658_read_sensor_data(s_imu_dev, &data) == ESP_OK) {
                 s_accel_offset[0] = data.accelX;
                 s_accel_offset[1] = data.accelY;
                 s_accel_offset[2] = data.accelZ;
-                update_calib_bar(s_accel_calib_x_val, s_accel_calib_x_bar, s_accel_offset[0], 20.0f);
-                update_calib_bar(s_accel_calib_y_val, s_accel_calib_y_bar, s_accel_offset[1], 20.0f);
-                update_calib_bar(s_accel_calib_z_val, s_accel_calib_z_bar, s_accel_offset[2], 20.0f);
                 lv_label_set_text(s_status_label, "Accel zeroed!");
-                ESP_UTILS_LOGI("Accel zeroed: X=%.2f Y=%.2f Z=%.2f", s_accel_offset[0], s_accel_offset[1], s_accel_offset[2]);
+                ESP_UTILS_LOGI("Accel zeroed: X=%.4f Y=%.4f Z=%.4f m/s2",
+                    s_accel_offset[0], s_accel_offset[1], s_accel_offset[2]);
             }
         }
     }, LV_EVENT_CLICKED, nullptr);
 
     lv_obj_add_event_cb(gyro_zero_btn, [](lv_event_t *e) {
-        lv_event_code_t code = lv_event_get_code(e);
-        if (code == LV_EVENT_CLICKED) {
-            s_gyro_offset[0] = s_gyro_filtered[0];
-            s_gyro_offset[1] = s_gyro_filtered[1];
-            s_gyro_offset[2] = s_gyro_filtered[2];
-            update_calib_bar(s_gyro_calib_x_val, s_gyro_calib_x_bar, s_gyro_offset[0], 2.0f);
-            update_calib_bar(s_gyro_calib_y_val, s_gyro_calib_y_bar, s_gyro_offset[1], 2.0f);
-            update_calib_bar(s_gyro_calib_z_val, s_gyro_calib_z_bar, s_gyro_offset[2], 2.0f);
-            lv_label_set_text(s_status_label, "Gyro zeroed!");
-            ESP_UTILS_LOGI("Gyro zeroed: X=%.4f Y=%.4f Z=%.4f", s_gyro_offset[0], s_gyro_offset[1], s_gyro_offset[2]);
+        if (lv_event_get_code(e) == LV_EVENT_CLICKED && s_imu_dev != nullptr) {
+            qmi8658_data_t data;
+            if (qmi8658_read_sensor_data(s_imu_dev, &data) == ESP_OK) {
+                s_gyro_offset[0] = data.gyroX;
+                s_gyro_offset[1] = data.gyroY;
+                s_gyro_offset[2] = data.gyroZ;
+                lv_label_set_text(s_status_label, "Gyro zeroed!");
+                ESP_UTILS_LOGI("Gyro zeroed: X=%.4f Y=%.4f Z=%.4f dps",
+                    s_gyro_offset[0], s_gyro_offset[1], s_gyro_offset[2]);
+            }
         }
     }, LV_EVENT_CLICKED, nullptr);
 
     lv_obj_add_event_cb(reset_btn, [](lv_event_t *e) {
-        lv_event_code_t code = lv_event_get_code(e);
-        if (code == LV_EVENT_CLICKED) {
+        if (lv_event_get_code(e) == LV_EVENT_CLICKED) {
             s_accel_offset[0] = s_accel_offset[1] = s_accel_offset[2] = 0;
             s_gyro_offset[0] = s_gyro_offset[1] = s_gyro_offset[2] = 0;
-            update_calib_bar(s_accel_calib_x_val, s_accel_calib_x_bar, 0, 20.0f);
-            update_calib_bar(s_accel_calib_y_val, s_accel_calib_y_bar, 0, 20.0f);
-            update_calib_bar(s_accel_calib_z_val, s_accel_calib_z_bar, 0, 20.0f);
-            update_calib_bar(s_gyro_calib_x_val, s_gyro_calib_x_bar, 0, 2.0f);
-            update_calib_bar(s_gyro_calib_y_val, s_gyro_calib_y_bar, 0, 2.0f);
-            update_calib_bar(s_gyro_calib_z_val, s_gyro_calib_z_bar, 0, 2.0f);
+            s_angle[0] = s_angle[1] = s_angle[2] = 0;
             lv_label_set_text(s_status_label, "Reset!");
             ESP_UTILS_LOGI("Calibration reset");
         }
     }, LV_EVENT_CLICKED, nullptr);
+}
 
-    struct IMU_UI_Data {
-        lv_obj_t *x_val, *y_val, *z_val;
-        lv_obj_t *x_bar, *y_bar, *z_bar;
-        float max_val;
-    };
+bool IMUDemo::run(void)
+{
+    ESP_UTILS_LOGD("Run IMU Demo");
 
-    static IMU_UI_Data accel_ui = {accel_x_val, accel_y_val, accel_z_val, accel_x_bar, accel_y_bar, accel_z_bar, 20.0f};
-    static IMU_UI_Data gyro_ui = {gyro_x_val, gyro_y_val, gyro_z_val, gyro_x_bar, gyro_y_bar, gyro_z_bar, 2.0f};
+    if (s_imu_dev == nullptr) {
+        i2c_master_bus_handle_t bus_handle = bsp_i2c_get_handle();
+        if (bus_handle != nullptr) {
+            s_imu_dev = new qmi8658_dev_t;
+            if (qmi8658_init(s_imu_dev, bus_handle, QMI8658_ADDRESS_HIGH) == ESP_OK) {
+                qmi8658_set_accel_range(s_imu_dev, QMI8658_ACCEL_RANGE_8G);
+                qmi8658_set_accel_odr(s_imu_dev, QMI8658_ACCEL_ODR_500HZ);
+                qmi8658_set_accel_unit_mps2(s_imu_dev, true);
+                qmi8658_set_gyro_range(s_imu_dev, QMI8658_GYRO_RANGE_256DPS);
+                qmi8658_set_gyro_odr(s_imu_dev, QMI8658_GYRO_ODR_500HZ);
+                qmi8658_write_register(s_imu_dev, QMI8658_CTRL5, 0x03);
+                ESP_UTILS_LOGI("IMU initialized");
+            } else {
+                delete s_imu_dev;
+                s_imu_dev = nullptr;
+                ESP_LOGE("IMU_DEMO", "QMI8658 init failed");
+            }
+        }
+    }
+
+    for (int i = 0; i < PAGE_COUNT; i++) {
+        create_base_page(i);
+    }
+
+    create_gauge(PAGE_ACCEL, 0, "X", 0x58A6FF, "m/s2");
+    create_gauge(PAGE_ACCEL, 1, "Y", 0x58A6FF, "m/s2");
+    create_gauge(PAGE_ACCEL, 2, "Z", 0x58A6FF, "m/s2");
+
+    create_gauge(PAGE_GYRO, 0, "X", 0xFF7B72, "dps");
+    create_gauge(PAGE_GYRO, 1, "Y", 0xFF7B72, "dps");
+    create_gauge(PAGE_GYRO, 2, "Z", 0xFF7B72, "dps");
+
+    create_gauge(PAGE_ATTITUDE, 0, "Pitch", 0xA78BFA, "deg");
+    create_gauge(PAGE_ATTITUDE, 1, "Roll", 0xC084FC, "deg");
+    create_gauge(PAGE_ATTITUDE, 2, "Yaw", 0xE879F9, "deg");
+
+    create_gauge(PAGE_FIXED, 0, "X", 0x0FB3B1, "m/s2");
+    create_gauge(PAGE_FIXED, 1, "Y", 0x0FB3B1, "m/s2");
+    create_gauge(PAGE_FIXED, 2, "Z", 0x0FB3B1, "m/s2");
+
+    create_gauge(PAGE_ACCEL_CALIB, 0, "X", 0x58A6FF, "m/s2");
+    create_gauge(PAGE_ACCEL_CALIB, 1, "Y", 0x58A6FF, "m/s2");
+    create_gauge(PAGE_ACCEL_CALIB, 2, "Z", 0x58A6FF, "m/s2");
+
+    create_gauge(PAGE_GYRO_CALIB, 0, "X", 0xFF7B72, "dps");
+    create_gauge(PAGE_GYRO_CALIB, 1, "Y", 0xFF7B72, "dps");
+    create_gauge(PAGE_GYRO_CALIB, 2, "Z", 0xFF7B72, "dps");
+
+    create_zero_page();
 
     if (s_imu_dev) {
         s_imu_timer = lv_timer_create([](lv_timer_t *t) {
             if (s_imu_dev == nullptr) return;
             qmi8658_data_t data;
-            if (qmi8658_read_sensor_data(s_imu_dev, &data) == ESP_OK) {
-                float accelX = data.accelX - s_accel_offset[0];
-                float accelY = data.accelY - s_accel_offset[1];
-                float accelZ = data.accelZ - s_accel_offset[2];
-                float gyroX = data.gyroX - s_gyro_offset[0];
-                float gyroY = data.gyroY - s_gyro_offset[1];
-                float gyroZ = data.gyroZ - s_gyro_offset[2];
+            if (qmi8658_read_sensor_data(s_imu_dev, &data) != ESP_OK) return;
 
-                s_gyro_filtered[0] = s_gyro_filtered[0] + FILTER_ALPHA * (gyroX - s_gyro_filtered[0]);
-                s_gyro_filtered[1] = s_gyro_filtered[1] + FILTER_ALPHA * (gyroY - s_gyro_filtered[1]);
-                s_gyro_filtered[2] = s_gyro_filtered[2] + FILTER_ALPHA * (gyroZ - s_gyro_filtered[2]);
-                gyroX = s_gyro_filtered[0];
-                gyroY = s_gyro_filtered[1];
-                gyroZ = s_gyro_filtered[2];
+            float accelX = data.accelX - s_accel_offset[0];
+            float accelY = data.accelY - s_accel_offset[1];
+            float accelZ = data.accelZ - s_accel_offset[2];
 
-                s_angle[0] += gyroX * 0.02f;
-                s_angle[1] += gyroY * 0.02f;
-                s_angle[2] += gyroZ * 0.02f;
+            float gyroX = data.gyroX;
+            float gyroY = data.gyroY;
+            float gyroZ = data.gyroZ;
 
-                float pitch = s_angle[0];
-                float roll = s_angle[1];
-                float yaw = s_angle[2];
+            float gyroX_filt = data.gyroX - s_gyro_offset[0];
+            float gyroY_filt = data.gyroY - s_gyro_offset[1];
+            float gyroZ_filt = data.gyroZ - s_gyro_offset[2];
 
-                float ax_fixed = accelX;
-                float ay_fixed = accelY;
-                float az_fixed = accelZ;
-                float sinp = sinf(pitch);
-                float cosp = cosf(pitch);
-                float sinr = sinf(roll);
-                float cosr = cosf(roll);
-                float siny = sinf(yaw);
-                float cosy = cosf(yaw);
+            constexpr float GYRO_THRESHOLD = 7.0f;
+            if (fabsf(gyroX_filt) < GYRO_THRESHOLD) gyroX_filt = 0;
+            if (fabsf(gyroY_filt) < GYRO_THRESHOLD) gyroY_filt = 0;
+            if (fabsf(gyroZ_filt) < GYRO_THRESHOLD) gyroZ_filt = 0;
 
-                float ax_r1 = cosy * ax_fixed + siny * sinr * ay_fixed - siny * cosr * az_fixed;
-                float ay_r1 = cosr * ay_fixed + sinr * az_fixed;
-                float az_r1 = siny * ax_fixed - cosy * sinr * ay_fixed - cosy * cosr * az_fixed;
-                float ax_fixed_final = cosr * ax_r1 - sinr * az_r1;
-                float ay_fixed_final = sinp * sinr * ax_r1 + cosp * ay_r1 - sinp * cosr * az_r1;
-                float az_fixed_final = cosp * sinr * ax_r1 + sinp * ay_r1 + cosp * cosr * az_r1;
+            float dps_to_rad = M_PI / 180.0f;
+            s_angle[0] += gyroX_filt * 0.02f * dps_to_rad;
+            s_angle[1] += gyroY_filt * 0.02f * dps_to_rad;
+            s_angle[2] += gyroZ_filt * 0.02f * dps_to_rad;
 
-                auto update_axis = [](lv_obj_t *val_label, lv_obj_t *bar, float value, float max_val, const char *unit) {
-                    char buf[32];
-                    snprintf(buf, sizeof(buf), "%.2f %s", value, unit);
-                    lv_label_set_text(val_label, buf);
+            float pitch = s_angle[0];
+            float roll = s_angle[1];
+            float yaw = s_angle[2];
 
-                    float abs_val = fabsf(value);
-                    int bar_width = (int)(170.0f * (abs_val / max_val));
-                    if (bar_width > 170) bar_width = 170;
-                    if (bar_width < 1) bar_width = 1;
-                    lv_obj_set_width(bar, bar_width);
+            float ax_fixed = accelX;
+            float ay_fixed = accelY;
+            float az_fixed = accelZ;
+            float sinp = sinf(pitch), cosp = cosf(pitch);
+            float sinr = sinf(roll), cosr = cosf(roll);
+            float siny = sinf(yaw), cosy = cosf(yaw);
 
-                    if (value < 0) {
-                        lv_obj_align(bar, LV_ALIGN_CENTER, -(bar_width / 2), 0);
-                    } else if (value > 0) {
-                        lv_obj_align(bar, LV_ALIGN_CENTER, (bar_width / 2), 0);
-                    } else {
-                        lv_obj_set_width(bar, 4);
-                        lv_obj_align(bar, LV_ALIGN_CENTER, 0, 0);
-                    }
-                };
+            float ax_r1 = cosy * ax_fixed + siny * sinr * ay_fixed - siny * cosr * az_fixed;
+            float ay_r1 = cosr * ay_fixed + sinr * az_fixed;
+            float az_r1 = siny * ax_fixed - cosy * sinr * ay_fixed - cosy * cosr * az_fixed;
+            float ax_fixed_final = cosr * ax_r1 - sinr * az_r1;
+            float ay_fixed_final = sinp * sinr * ax_r1 + cosp * ay_r1 - sinp * cosr * az_r1;
+            float az_fixed_final = cosp * sinr * ax_r1 + sinp * ay_r1 + cosp * cosr * az_r1;
 
-                update_axis(accel_ui.x_val, accel_ui.x_bar, accelX, accel_ui.max_val, "m/s2");
-                update_axis(accel_ui.y_val, accel_ui.y_bar, accelY, accel_ui.max_val, "m/s2");
-                update_axis(accel_ui.z_val, accel_ui.z_bar, accelZ, accel_ui.max_val, "m/s2");
+            float rad_to_deg = 180.0f / M_PI;
 
-                update_axis(gyro_ui.x_val, gyro_ui.x_bar, gyroX, gyro_ui.max_val, "rad/s");
-                update_axis(gyro_ui.y_val, gyro_ui.y_bar, gyroY, gyro_ui.max_val, "rad/s");
-                update_axis(gyro_ui.z_val, gyro_ui.z_bar, gyroZ, gyro_ui.max_val, "rad/s");
+            AxisUI &accel_ui = s_page_ui[PAGE_ACCEL];
+            update_axis(accel_ui.vals[0], accel_ui.bars[0], accelX, 20.0f, "m/s2");
+            update_axis(accel_ui.vals[1], accel_ui.bars[1], accelY, 20.0f, "m/s2");
+            update_axis(accel_ui.vals[2], accel_ui.bars[2], accelZ, 20.0f, "m/s2");
 
-                update_axis(s_fixed_accel_x_val, s_fixed_accel_x_bar, ax_fixed_final, 20.0f, "m/s2");
-                update_axis(s_fixed_accel_y_val, s_fixed_accel_y_bar, ay_fixed_final, 20.0f, "m/s2");
-                update_axis(s_fixed_accel_z_val, s_fixed_accel_z_bar, az_fixed_final, 20.0f, "m/s2");
-            }
+            AxisUI &gyro_ui = s_page_ui[PAGE_GYRO];
+            update_axis(gyro_ui.vals[0], gyro_ui.bars[0], gyroX, 250.0f, "dps");
+            update_axis(gyro_ui.vals[1], gyro_ui.bars[1], gyroY, 250.0f, "dps");
+            update_axis(gyro_ui.vals[2], gyro_ui.bars[2], gyroZ, 250.0f, "dps");
+
+            AxisUI &att_ui = s_page_ui[PAGE_ATTITUDE];
+            update_axis(att_ui.vals[0], att_ui.bars[0], pitch * rad_to_deg, 180.0f, "deg");
+            update_axis(att_ui.vals[1], att_ui.bars[1], roll * rad_to_deg, 180.0f, "deg");
+            update_axis(att_ui.vals[2], att_ui.bars[2], yaw * rad_to_deg, 180.0f, "deg");
+
+            AxisUI &fixed_ui = s_page_ui[PAGE_FIXED];
+            update_axis(fixed_ui.vals[0], fixed_ui.bars[0], ax_fixed_final, 20.0f, "m/s2");
+            update_axis(fixed_ui.vals[1], fixed_ui.bars[1], ay_fixed_final, 20.0f, "m/s2");
+            update_axis(fixed_ui.vals[2], fixed_ui.bars[2], az_fixed_final, 20.0f, "m/s2");
+
+            AxisUI &accel_calib_ui = s_page_ui[PAGE_ACCEL_CALIB];
+            update_axis(accel_calib_ui.vals[0], accel_calib_ui.bars[0], s_accel_offset[0], 20.0f, "m/s2");
+            update_axis(accel_calib_ui.vals[1], accel_calib_ui.bars[1], s_accel_offset[1], 20.0f, "m/s2");
+            update_axis(accel_calib_ui.vals[2], accel_calib_ui.bars[2], s_accel_offset[2], 20.0f, "m/s2");
+
+            AxisUI &gyro_calib_ui = s_page_ui[PAGE_GYRO_CALIB];
+            update_axis(gyro_calib_ui.vals[0], gyro_calib_ui.bars[0], s_gyro_offset[0], 250.0f, "dps");
+            update_axis(gyro_calib_ui.vals[1], gyro_calib_ui.bars[1], s_gyro_offset[1], 250.0f, "dps");
+            update_axis(gyro_calib_ui.vals[2], gyro_calib_ui.bars[2], s_gyro_offset[2], 250.0f, "dps");
         }, 20, nullptr);
     }
 
-    lv_scr_load(s_scr_accel);
-
+    lv_scr_load(s_pages[PAGE_ACCEL]);
     return true;
 }
 
@@ -562,15 +442,11 @@ bool IMUDemo::back(void)
 
     s_accel_offset[0] = s_accel_offset[1] = s_accel_offset[2] = 0;
     s_gyro_offset[0] = s_gyro_offset[1] = s_gyro_offset[2] = 0;
-    s_gyro_filtered[0] = s_gyro_filtered[1] = s_gyro_filtered[2] = 0;
     s_angle[0] = s_angle[1] = s_angle[2] = 0;
 
-    s_scr_accel = nullptr;
-    s_scr_gyro = nullptr;
-    s_scr_accel_calib = nullptr;
-    s_scr_gyro_calib = nullptr;
-    s_scr_zero = nullptr;
-    s_scr_fixed_accel = nullptr;
+    for (int i = 0; i < PAGE_COUNT; i++) {
+        s_pages[i] = nullptr;
+    }
 
     ESP_UTILS_CHECK_FALSE_RETURN(notifyCoreClosed(), false, "Notify core closed failed");
     return true;
