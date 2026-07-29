@@ -24,13 +24,16 @@ static lv_timer_t *s_imu_timer = nullptr;
 static float s_accel_offset[3] = {0};
 static float s_gyro_offset[3] = {0};
 static float s_gyro_filtered[3] = {0};
-static constexpr float FILTER_ALPHA = 0.15f;
+static constexpr float FILTER_ALPHA = 0.001f;
+
+static float s_angle[3] = {0};
 
 static lv_obj_t *s_scr_accel = nullptr;
 static lv_obj_t *s_scr_gyro = nullptr;
 static lv_obj_t *s_scr_accel_calib = nullptr;
 static lv_obj_t *s_scr_gyro_calib = nullptr;
 static lv_obj_t *s_scr_zero = nullptr;
+static lv_obj_t *s_scr_fixed_accel = nullptr;
 
 static lv_obj_t *s_status_label = nullptr;
 
@@ -47,6 +50,13 @@ static lv_obj_t *s_gyro_calib_z_val = nullptr;
 static lv_obj_t *s_gyro_calib_x_bar = nullptr;
 static lv_obj_t *s_gyro_calib_y_bar = nullptr;
 static lv_obj_t *s_gyro_calib_z_bar = nullptr;
+
+static lv_obj_t *s_fixed_accel_x_val = nullptr;
+static lv_obj_t *s_fixed_accel_y_val = nullptr;
+static lv_obj_t *s_fixed_accel_z_val = nullptr;
+static lv_obj_t *s_fixed_accel_x_bar = nullptr;
+static lv_obj_t *s_fixed_accel_y_bar = nullptr;
+static lv_obj_t *s_fixed_accel_z_bar = nullptr;
 
 IMUDemo *IMUDemo::_instance = nullptr;
 
@@ -77,10 +87,10 @@ static void ui_event_scr_accel(lv_event_t *e)
     lv_event_code_t code = lv_event_get_code(e);
     if (code == LV_EVENT_GESTURE && lv_indev_get_gesture_dir(lv_indev_active()) == LV_DIR_LEFT) {
         lv_indev_wait_release(lv_indev_active());
-        switch_screen(s_scr_gyro);
+        switch_screen(s_scr_zero);
     } else if (code == LV_EVENT_GESTURE && lv_indev_get_gesture_dir(lv_indev_active()) == LV_DIR_RIGHT) {
         lv_indev_wait_release(lv_indev_active());
-        switch_screen(s_scr_zero);
+        switch_screen(s_scr_gyro);
     }
 }
 
@@ -89,22 +99,22 @@ static void ui_event_scr_gyro(lv_event_t *e)
     lv_event_code_t code = lv_event_get_code(e);
     if (code == LV_EVENT_GESTURE && lv_indev_get_gesture_dir(lv_indev_active()) == LV_DIR_LEFT) {
         lv_indev_wait_release(lv_indev_active());
-        switch_screen(s_scr_zero);
+        switch_screen(s_scr_accel);
     } else if (code == LV_EVENT_GESTURE && lv_indev_get_gesture_dir(lv_indev_active()) == LV_DIR_RIGHT) {
         lv_indev_wait_release(lv_indev_active());
-        switch_screen(s_scr_accel);
+        switch_screen(s_scr_fixed_accel);
     }
 }
 
-static void ui_event_scr_zero(lv_event_t *e)
+static void ui_event_scr_fixed_accel(lv_event_t *e)
 {
     lv_event_code_t code = lv_event_get_code(e);
     if (code == LV_EVENT_GESTURE && lv_indev_get_gesture_dir(lv_indev_active()) == LV_DIR_LEFT) {
         lv_indev_wait_release(lv_indev_active());
-        switch_screen(s_scr_accel_calib);
+        switch_screen(s_scr_gyro);
     } else if (code == LV_EVENT_GESTURE && lv_indev_get_gesture_dir(lv_indev_active()) == LV_DIR_RIGHT) {
         lv_indev_wait_release(lv_indev_active());
-        switch_screen(s_scr_gyro);
+        switch_screen(s_scr_accel_calib);
     }
 }
 
@@ -113,10 +123,10 @@ static void ui_event_scr_accel_calib(lv_event_t *e)
     lv_event_code_t code = lv_event_get_code(e);
     if (code == LV_EVENT_GESTURE && lv_indev_get_gesture_dir(lv_indev_active()) == LV_DIR_LEFT) {
         lv_indev_wait_release(lv_indev_active());
-        switch_screen(s_scr_gyro_calib);
+        switch_screen(s_scr_fixed_accel);
     } else if (code == LV_EVENT_GESTURE && lv_indev_get_gesture_dir(lv_indev_active()) == LV_DIR_RIGHT) {
         lv_indev_wait_release(lv_indev_active());
-        switch_screen(s_scr_zero);
+        switch_screen(s_scr_gyro_calib);
     }
 }
 
@@ -125,10 +135,22 @@ static void ui_event_scr_gyro_calib(lv_event_t *e)
     lv_event_code_t code = lv_event_get_code(e);
     if (code == LV_EVENT_GESTURE && lv_indev_get_gesture_dir(lv_indev_active()) == LV_DIR_LEFT) {
         lv_indev_wait_release(lv_indev_active());
-        switch_screen(s_scr_accel);
+        switch_screen(s_scr_accel_calib);
     } else if (code == LV_EVENT_GESTURE && lv_indev_get_gesture_dir(lv_indev_active()) == LV_DIR_RIGHT) {
         lv_indev_wait_release(lv_indev_active());
-        switch_screen(s_scr_gyro);
+        switch_screen(s_scr_zero);
+    }
+}
+
+static void ui_event_scr_zero(lv_event_t *e)
+{
+    lv_event_code_t code = lv_event_get_code(e);
+    if (code == LV_EVENT_GESTURE && lv_indev_get_gesture_dir(lv_indev_active()) == LV_DIR_LEFT) {
+        lv_indev_wait_release(lv_indev_active());
+        switch_screen(s_scr_gyro_calib);
+    } else if (code == LV_EVENT_GESTURE && lv_indev_get_gesture_dir(lv_indev_active()) == LV_DIR_RIGHT) {
+        lv_indev_wait_release(lv_indev_active());
+        switch_screen(s_scr_accel);
     }
 }
 
@@ -206,6 +228,11 @@ bool IMUDemo::run(void)
     lv_obj_set_style_bg_color(s_scr_gyro_calib, lv_color_hex(0x0D1117), 0);
     lv_obj_add_event_cb(s_scr_gyro_calib, ui_event_scr_gyro_calib, LV_EVENT_GESTURE, nullptr);
 
+    s_scr_fixed_accel = lv_obj_create(NULL);
+    lv_obj_set_size(s_scr_fixed_accel, 410, 502);
+    lv_obj_set_style_bg_color(s_scr_fixed_accel, lv_color_hex(0x0D1117), 0);
+    lv_obj_add_event_cb(s_scr_fixed_accel, ui_event_scr_fixed_accel, LV_EVENT_GESTURE, nullptr);
+
     auto create_title = [](lv_obj_t *parent, const char *text, lv_color_t bg_color) {
         lv_obj_t *title_bg = lv_obj_create(parent);
         lv_obj_set_size(title_bg, 410, 70);
@@ -232,19 +259,22 @@ bool IMUDemo::run(void)
     };
 
     create_title(s_scr_accel, "ACCELEROMETER", lv_color_hex(0x1C7F54));
-    create_nav_hint(s_scr_accel, "Swipe Left->Gyro  Right->Zero");
+    create_nav_hint(s_scr_accel, "Swipe Left->Zero  Right->Gyro");
 
     create_title(s_scr_gyro, "GYROSCOPE", lv_color_hex(0xA62639));
-    create_nav_hint(s_scr_gyro, "Swipe Left->Zero  Right->Accel");
+    create_nav_hint(s_scr_gyro, "Swipe Left->Accel  Right->Fixed");
 
-    create_title(s_scr_zero, "ZERO POINT", lv_color_hex(0xBF8700));
-    create_nav_hint(s_scr_zero, "Swipe Left->AccelCalib  Right->Gyro");
+    create_title(s_scr_fixed_accel, "FIXED ACCEL", lv_color_hex(0x0FB3B1));
+    create_nav_hint(s_scr_fixed_accel, "Swipe Left->Gyro  Right->AccelCalib");
 
     create_title(s_scr_accel_calib, "ACCEL CALIB", lv_color_hex(0x1C7F54));
-    create_nav_hint(s_scr_accel_calib, "Swipe Left->GyroCalib  Right->Zero");
+    create_nav_hint(s_scr_accel_calib, "Swipe Left->Fixed  Right->GyroCalib");
 
     create_title(s_scr_gyro_calib, "GYRO CALIB", lv_color_hex(0xA62639));
-    create_nav_hint(s_scr_gyro_calib, "Swipe Left->Accel  Right->Gyro");
+    create_nav_hint(s_scr_gyro_calib, "Swipe Left->AccelCalib  Right->Zero");
+
+    create_title(s_scr_zero, "ZERO POINT", lv_color_hex(0xBF8700));
+    create_nav_hint(s_scr_zero, "Swipe Left->GyroCalib  Right->Accel");
 
     auto create_gauge = [](lv_obj_t *parent, int idx, const char *axis, lv_color_t color, const char *unit, lv_obj_t **out_val, lv_obj_t **out_bar) {
         int y_base = 90 + idx * 130;
@@ -313,6 +343,10 @@ bool IMUDemo::run(void)
     create_gauge(s_scr_gyro_calib, 0, "X", lv_color_hex(0xFF7B72), "rad/s", &s_gyro_calib_x_val, &s_gyro_calib_x_bar);
     create_gauge(s_scr_gyro_calib, 1, "Y", lv_color_hex(0xFF7B72), "rad/s", &s_gyro_calib_y_val, &s_gyro_calib_y_bar);
     create_gauge(s_scr_gyro_calib, 2, "Z", lv_color_hex(0xFF7B72), "rad/s", &s_gyro_calib_z_val, &s_gyro_calib_z_bar);
+
+    create_gauge(s_scr_fixed_accel, 0, "X", lv_color_hex(0x0FB3B1), "m/s2", &s_fixed_accel_x_val, &s_fixed_accel_x_bar);
+    create_gauge(s_scr_fixed_accel, 1, "Y", lv_color_hex(0x0FB3B1), "m/s2", &s_fixed_accel_y_val, &s_fixed_accel_y_bar);
+    create_gauge(s_scr_fixed_accel, 2, "Z", lv_color_hex(0x0FB3B1), "m/s2", &s_fixed_accel_z_val, &s_fixed_accel_z_bar);
 
     lv_obj_t *zero_box = lv_obj_create(s_scr_zero);
     lv_obj_set_size(zero_box, 370, 350);
@@ -395,18 +429,15 @@ lv_obj_add_event_cb(accel_zero_btn, [](lv_event_t *e) {
 
     lv_obj_add_event_cb(gyro_zero_btn, [](lv_event_t *e) {
         lv_event_code_t code = lv_event_get_code(e);
-        if (code == LV_EVENT_CLICKED && s_imu_dev != nullptr) {
-            qmi8658_data_t data;
-            if (qmi8658_read_sensor_data(s_imu_dev, &data) == ESP_OK) {
-                s_gyro_offset[0] = data.gyroX;
-                s_gyro_offset[1] = data.gyroY;
-                s_gyro_offset[2] = data.gyroZ;
-                update_calib_bar(s_gyro_calib_x_val, s_gyro_calib_x_bar, s_gyro_offset[0], 2.0f);
-                update_calib_bar(s_gyro_calib_y_val, s_gyro_calib_y_bar, s_gyro_offset[1], 2.0f);
-                update_calib_bar(s_gyro_calib_z_val, s_gyro_calib_z_bar, s_gyro_offset[2], 2.0f);
-                lv_label_set_text(s_status_label, "Gyro zeroed!");
-                ESP_UTILS_LOGI("Gyro zeroed");
-            }
+        if (code == LV_EVENT_CLICKED) {
+            s_gyro_offset[0] = s_gyro_filtered[0];
+            s_gyro_offset[1] = s_gyro_filtered[1];
+            s_gyro_offset[2] = s_gyro_filtered[2];
+            update_calib_bar(s_gyro_calib_x_val, s_gyro_calib_x_bar, s_gyro_offset[0], 2.0f);
+            update_calib_bar(s_gyro_calib_y_val, s_gyro_calib_y_bar, s_gyro_offset[1], 2.0f);
+            update_calib_bar(s_gyro_calib_z_val, s_gyro_calib_z_bar, s_gyro_offset[2], 2.0f);
+            lv_label_set_text(s_status_label, "Gyro zeroed!");
+            ESP_UTILS_LOGI("Gyro zeroed: X=%.4f Y=%.4f Z=%.4f", s_gyro_offset[0], s_gyro_offset[1], s_gyro_offset[2]);
         }
     }, LV_EVENT_CLICKED, nullptr);
 
@@ -454,6 +485,31 @@ lv_obj_add_event_cb(accel_zero_btn, [](lv_event_t *e) {
                 gyroY = s_gyro_filtered[1];
                 gyroZ = s_gyro_filtered[2];
 
+                s_angle[0] += gyroX * 0.02f;
+                s_angle[1] += gyroY * 0.02f;
+                s_angle[2] += gyroZ * 0.02f;
+
+                float pitch = s_angle[0];
+                float roll = s_angle[1];
+                float yaw = s_angle[2];
+
+                float ax_fixed = accelX;
+                float ay_fixed = accelY;
+                float az_fixed = accelZ;
+                float sinp = sinf(pitch);
+                float cosp = cosf(pitch);
+                float sinr = sinf(roll);
+                float cosr = cosf(roll);
+                float siny = sinf(yaw);
+                float cosy = cosf(yaw);
+
+                float ax_r1 = cosy * ax_fixed + siny * sinr * ay_fixed - siny * cosr * az_fixed;
+                float ay_r1 = cosr * ay_fixed + sinr * az_fixed;
+                float az_r1 = siny * ax_fixed - cosy * sinr * ay_fixed - cosy * cosr * az_fixed;
+                float ax_fixed_final = cosr * ax_r1 - sinr * az_r1;
+                float ay_fixed_final = sinp * sinr * ax_r1 + cosp * ay_r1 - sinp * cosr * az_r1;
+                float az_fixed_final = cosp * sinr * ax_r1 + sinp * ay_r1 + cosp * cosr * az_r1;
+
                 auto update_axis = [](lv_obj_t *val_label, lv_obj_t *bar, float value, float max_val, const char *unit) {
                     char buf[32];
                     snprintf(buf, sizeof(buf), "%.2f %s", value, unit);
@@ -482,6 +538,10 @@ lv_obj_add_event_cb(accel_zero_btn, [](lv_event_t *e) {
                 update_axis(gyro_ui.x_val, gyro_ui.x_bar, gyroX, gyro_ui.max_val, "rad/s");
                 update_axis(gyro_ui.y_val, gyro_ui.y_bar, gyroY, gyro_ui.max_val, "rad/s");
                 update_axis(gyro_ui.z_val, gyro_ui.z_bar, gyroZ, gyro_ui.max_val, "rad/s");
+
+                update_axis(s_fixed_accel_x_val, s_fixed_accel_x_bar, ax_fixed_final, 20.0f, "m/s2");
+                update_axis(s_fixed_accel_y_val, s_fixed_accel_y_bar, ay_fixed_final, 20.0f, "m/s2");
+                update_axis(s_fixed_accel_z_val, s_fixed_accel_z_bar, az_fixed_final, 20.0f, "m/s2");
             }
         }, 20, nullptr);
     }
@@ -503,12 +563,14 @@ bool IMUDemo::back(void)
     s_accel_offset[0] = s_accel_offset[1] = s_accel_offset[2] = 0;
     s_gyro_offset[0] = s_gyro_offset[1] = s_gyro_offset[2] = 0;
     s_gyro_filtered[0] = s_gyro_filtered[1] = s_gyro_filtered[2] = 0;
+    s_angle[0] = s_angle[1] = s_angle[2] = 0;
 
     s_scr_accel = nullptr;
     s_scr_gyro = nullptr;
     s_scr_accel_calib = nullptr;
     s_scr_gyro_calib = nullptr;
     s_scr_zero = nullptr;
+    s_scr_fixed_accel = nullptr;
 
     ESP_UTILS_CHECK_FALSE_RETURN(notifyCoreClosed(), false, "Notify core closed failed");
     return true;
