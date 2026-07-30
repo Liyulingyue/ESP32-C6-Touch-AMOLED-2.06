@@ -1,0 +1,6 @@
+version: "1.0.0"
+description: Settings app for smartwatch
+dependencies:
+  espressif/brookesia_core:
+    version: ">=0.6.0"
+    public: true

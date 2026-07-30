@@ -18,6 +18,10 @@ esp_err_t wifi_disconnect(void);
 bool wifi_is_connected(void);
 esp_err_t wifi_register_event_callback(wifi_event_callback_t callback);
 
+esp_err_t wifi_start_ap_config(void);
+esp_err_t wifi_stop_ap_config(void);
+bool wifi_is_ap_running(void);
+
 #ifdef __cplusplus
 }
 #endif
